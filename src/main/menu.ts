@@ -11,7 +11,11 @@ import { FileTransport } from "electron-log";
 import { getStateManager } from "./state";
 
 import type { BubbleView } from "../renderer/contexts/BubbleViewContext";
-import { getMainWindow, toggleChatWindow } from "./windows";
+import {
+  getMainWindow,
+  resetClippyPosition,
+  toggleChatWindow,
+} from "./windows";
 import { IpcMessages } from "../ipc-messages";
 import { checkForUpdates } from "./update";
 import {
@@ -114,6 +118,12 @@ export function getMainAppMenu(): Menu {
       label: "Toggle Chat Window",
       click: () => toggleChatWindow(),
       accelerator: "Cmd+`",
+    }),
+  );
+  windowMenu?.submenu?.append(
+    new MenuItem({
+      label: "Reset Clippy Position",
+      click: () => resetClippyPosition(),
     }),
   );
 

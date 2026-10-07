@@ -18,6 +18,7 @@ export interface SettingsState {
   defaultFont: DefaultFont;
   defaultFontSize: number;
   disableAutoUpdate?: boolean;
+  clippyPosition?: { x: number; y: number };
 }
 
 export interface SharedState {

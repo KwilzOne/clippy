@@ -122,9 +122,6 @@ export class StateManager {
       setFont(newValue.defaultFont);
     }
 
-    // Update the menu, which contains state
-    setupAppMenu();
-
     // Log the settings change by getting a deep diff
     const diff = Object.keys(newValue).reduce(
       (acc, key) => {
@@ -137,6 +134,13 @@ export class StateManager {
       },
       {} as Record<string, unknown>,
     );
+
+    // Update the menu, which contains state (only if relevant settings changed)
+    const diffKeys = Object.keys(diff);
+    if (diffKeys.some((k) => k !== "clippyPosition")) {
+      setupAppMenu();
+    }
+
     getLogger().info("Settings changed", diff);
   }
 
