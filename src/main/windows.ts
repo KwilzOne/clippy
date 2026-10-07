@@ -190,15 +190,12 @@ export async function createMainWindow() {
       });
     };
 
-    mainWindow.webContents.on(
-      "did-fail-load",
-      (_event, errorCode) => {
-        if (errorCode === -102 && retries < maxRetries) {
-          retries++;
-          setTimeout(loadDevServer, 500);
-        }
-      },
-    );
+    mainWindow.webContents.on("did-fail-load", (_event, errorCode) => {
+      if (errorCode === -102 && retries < maxRetries) {
+        retries++;
+        setTimeout(loadDevServer, 500);
+      }
+    });
 
     loadDevServer();
   } else {
@@ -215,6 +212,10 @@ export async function createMainWindow() {
   mainWindow.webContents.on("context-menu", (event) => {
     event.preventDefault();
     popupAppMenu();
+  });
+
+  mainWindow.on("closed", () => {
+    mainWindow = undefined;
   });
 }
 

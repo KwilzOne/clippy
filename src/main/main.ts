@@ -5,6 +5,7 @@ if (shouldQuit) {
   app.quit();
 }
 
+import fs from "fs";
 import { app, BrowserWindow } from "electron";
 import { loadElectronLlm } from "@electron/llm";
 import { setupIpcListeners } from "./ipc";
@@ -27,15 +28,28 @@ async function onReady() {
 async function loadLlm() {
   await loadElectronLlm({
     getModelPath: (modelAlias: string) => {
-      console.info(
-        `Loading model ${modelAlias} from ${getModelManager().getModelByName(modelAlias)?.path}`,
-      );
-      return getModelManager().getModelByName(modelAlias)?.path;
+      const model = getModelManager().getModelByName(modelAlias);
+      if (!model || !model.path || !fs.existsSync(model.path)) {
+        console.warn(
+          `Model ${modelAlias} does not exist on disk, skipping LLM load`,
+        );
+        return undefined;
+      }
+      console.info(`Loading model ${modelAlias} from ${model.path}`);
+      return model.path;
     },
   });
 }
 
 app.on("ready", onReady);
+
+app.on("before-quit", () => {
+  try {
+    getModelManager().cancelAllDownloads();
+  } catch (error) {
+    console.error("Error cancelling downloads on quit", error);
+  }
+});
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits

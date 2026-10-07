@@ -2,6 +2,7 @@ import { DebugState } from "../debugState";
 import Store from "electron-store";
 import { getMainWindow } from "./windows";
 import { IpcMessages } from "../ipc-messages";
+import { getLogger } from "./logger";
 
 class DebugManager {
   public store: Store<DebugState>;
@@ -24,12 +25,16 @@ class DebugManager {
    *
    * @param newValue
    */
-  public onDidAnyChange(newValue: DebugState = this.store.store) {
-    getMainWindow()?.webContents.send(
-      IpcMessages.DEBUG_STATE_CHANGED,
-      newValue,
-    );
-  }
+  public onDidAnyChange = (newValue: DebugState = this.store.store) => {
+    try {
+      const win = getMainWindow();
+      if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+        win.webContents.send(IpcMessages.DEBUG_STATE_CHANGED, newValue);
+      }
+    } catch (error) {
+      getLogger().warn("Failed to send debug state change to renderer", error);
+    }
+  };
 }
 
 let _debugManager: DebugManager | null = null;

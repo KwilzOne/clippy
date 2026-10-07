@@ -11,6 +11,8 @@ import { getDebugManager } from "./debug";
 
 class ModelManager {
   private downloadItems: Record<string, DownloadItem | MockDownloadItem> = {};
+  private downloadStartTimes: Record<string, number> = {};
+  private pendingDownloadModelName?: string;
 
   constructor() {
     session.defaultSession.on("will-download", (event, downloadItem) =>
@@ -54,36 +56,29 @@ class ModelManager {
       throw new Error(`Model not found: ${name}`);
     }
 
-    // Cancel existing download if any
-    if (this.downloadItems[name]) {
-      try {
-        this.downloadItems[name].cancel();
-      } catch (error) {
-        getLogger().error(
-          `ModelManager: Error canceling download: ${name}`,
-          error,
-        );
-      }
-
-      delete this.downloadItems[name];
-    }
+    // Cancel all other downloads so we don't download multiple large models simultaneously
+    this.cancelAllDownloads();
 
     // Set model state
     model.downloaded = false;
     model.path = getModelPath(model);
 
     if (getDebugManager().store.get("simulateDownload")) {
+      this.downloadStartTimes[name] = Date.now();
       this.downloadItems[name] = new MockDownloadItem(model, () => {
         model.downloaded = true;
+        delete this.downloadItems[name];
+        delete this.downloadStartTimes[name];
         this.pollRendererModelState();
       });
     } else {
+      this.pendingDownloadModelName = name;
       session.defaultSession.downloadURL(model.url);
     }
 
     setTimeout(() => {
       this.pollRendererModelState();
-    }, 500);
+    }, 200);
   }
 
   /**
@@ -98,10 +93,12 @@ class ModelManager {
     const models = { ...this.models };
 
     if (models[name]) {
-      this.cancelDownload(this.models[name]);
+      this.cancelDownload(models[name]);
 
       delete models[name];
       this.models = models;
+    } else if (this.pendingDownloadModelName === name) {
+      this.pendingDownloadModelName = undefined;
     }
 
     this.pollRendererModelState();
@@ -118,7 +115,7 @@ class ModelManager {
 
     const model = this.models[name];
 
-    if (!model || !model.path) {
+    if (!model) {
       getLogger().warn(
         `ModelManager deleteModelByName: Model not found: ${name}`,
       );
@@ -132,16 +129,47 @@ class ModelManager {
       throw new Error(`Refusing to delete imported model: ${name}`);
     }
 
+    // Immediately stop download if active or pending
     this.cancelDownload(model);
 
-    if (fs.existsSync(model.path)) {
+    const modelPath = model.path || getModelPath(model);
+    model.downloaded = false;
+    model.downloadState = undefined;
+
+    // Wait a brief moment on Windows so Chromium releases any active file handles
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    if (modelPath && fs.existsSync(modelPath)) {
       try {
-        await fs.promises.unlink(model.path);
-        model.downloaded = false;
-        model.path = undefined;
+        await fs.promises.unlink(modelPath);
       } catch (error) {
-        getLogger().error(`ModelManager: Error deleting model: ${name}`, error);
-        return false;
+        getLogger().warn(
+          `ModelManager: Error deleting model file on first attempt: ${name}`,
+          error,
+        );
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          if (fs.existsSync(modelPath)) {
+            await fs.promises.unlink(modelPath);
+          }
+        } catch (retryError) {
+          getLogger().error(
+            `ModelManager: Error deleting model file on retry: ${name}`,
+            retryError,
+          );
+        }
+      }
+    }
+
+    // Also remove any partial .crdownload file left behind
+    if (modelPath) {
+      const crdownloadPath = `${modelPath}.crdownload`;
+      if (fs.existsSync(crdownloadPath)) {
+        try {
+          await fs.promises.unlink(crdownloadPath);
+        } catch {
+          // ignore
+        }
       }
     }
 
@@ -211,17 +239,30 @@ class ModelManager {
 
     for (const model of Object.values(this.models)) {
       const downloadItem = this.downloadItems[model.name];
-      const downloadState: DownloadState | undefined = downloadItem
-        ? {
-            totalBytes: downloadItem.getTotalBytes(),
-            receivedBytes: downloadItem.getReceivedBytes(),
-            percentComplete: downloadItem.getPercentComplete(),
-            startTime: downloadItem.getStartTime(),
-            savePath: downloadItem.getSavePath(),
-            currentBytesPerSecond: downloadItem.getCurrentBytesPerSecond(),
-            state: downloadItem.getState(),
-          }
-        : undefined;
+      let downloadState: DownloadState | undefined;
+
+      if (downloadItem) {
+        const totalBytes = downloadItem.getTotalBytes();
+        const receivedBytes = downloadItem.getReceivedBytes();
+        const percentComplete =
+          totalBytes > 0
+            ? Math.min(100, Math.round((receivedBytes / totalBytes) * 100))
+            : 0;
+        const currentBytesPerSecond =
+          typeof downloadItem.getCurrentBytesPerSecond === "function"
+            ? downloadItem.getCurrentBytesPerSecond()
+            : 0;
+
+        downloadState = {
+          totalBytes,
+          receivedBytes,
+          percentComplete,
+          startTime: this.downloadStartTimes[model.name] || Date.now(),
+          savePath: downloadItem.getSavePath(),
+          currentBytesPerSecond,
+          state: downloadItem.getState(),
+        };
+      }
 
       result[model.name] = {
         name: model.name,
@@ -323,15 +364,33 @@ class ModelManager {
     downloadItem: DownloadItem,
   ) {
     const urlChain = downloadItem.getURLChain();
-    const urlStr = urlChain[0];
-    const modelKey = Object.keys(this.models).find(
-      (k) => this.models[k].url === urlStr,
-    );
-    const model = this.models[modelKey];
+
+    // Match either by explicitly requested pending model, or by URL
+    let model: ManagedModel | undefined;
+    if (
+      this.pendingDownloadModelName &&
+      this.models[this.pendingDownloadModelName]
+    ) {
+      model = this.models[this.pendingDownloadModelName];
+      this.pendingDownloadModelName = undefined;
+    } else {
+      const modelKey = Object.keys(this.models).find((k) => {
+        const mUrl = this.models[k]?.url;
+        return (
+          mUrl &&
+          urlChain.some(
+            (u) => u === mUrl || u.startsWith(mUrl) || mUrl.startsWith(u),
+          )
+        );
+      });
+      if (modelKey) {
+        model = this.models[modelKey];
+      }
+    }
 
     if (!model) {
       getLogger().info(
-        `ModelManager: Handling will-download event for ${urlStr}, but did not find matching model. Disallowing download.`,
+        `ModelManager: Handling will-download event for ${urlChain[0]}, but did not find matching model. Disallowing download.`,
       );
       event.preventDefault();
       return false;
@@ -354,21 +413,75 @@ class ModelManager {
     model.path = getModelPath(model);
     model.downloaded = false;
     this.downloadItems[model.name] = downloadItem;
+    this.downloadStartTimes[model.name] = Date.now();
 
     downloadItem.setSavePath(model.path);
 
+    let lastProgressTime = 0;
+    downloadItem.on("updated", (_event, state) => {
+      if (state === "progressing") {
+        const now = Date.now();
+        if (now - lastProgressTime > 200) {
+          lastProgressTime = now;
+          this.pollRendererModelState();
+        }
+      }
+    });
+
+    downloadItem.on("done", (_event, state) => {
+      getLogger().info(
+        `ModelManager: Download for ${model.name} finished with state: ${state}`,
+      );
+      if (state === "completed") {
+        model.downloaded = true;
+      } else {
+        model.downloaded = false;
+      }
+      delete this.downloadItems[model.name];
+      delete this.downloadStartTimes[model.name];
+      this.pollRendererModelState();
+    });
+
+    this.pollRendererModelState();
     return true;
   }
 
   /**
-   * Cancels a download by name
+   * Cancels a download by model name
    *
    * @param name
    */
-  private cancelDownload(model: ManagedModel) {
-    if (this.isModelDownloading(model)) {
+  public cancelDownloadByName(name: string) {
+    getLogger().info("Cancelling download by name", name);
+    const model = this.models[name];
+    if (model) {
+      this.cancelDownload(model);
+    } else if (this.pendingDownloadModelName === name) {
+      this.pendingDownloadModelName = undefined;
+      this.pollRendererModelState();
+    }
+  }
+
+  /**
+   * Cancels a download by model
+   *
+   * @param model
+   */
+  public cancelDownload(model: ManagedModel | Model) {
+    getLogger().info(
+      `ModelManager: Cancelling download for model ${model.name}`,
+    );
+
+    if (this.pendingDownloadModelName === model.name) {
+      this.pendingDownloadModelName = undefined;
+    }
+
+    const downloadItem = this.downloadItems[model.name];
+    if (downloadItem) {
       try {
-        this.downloadItems[model.name].cancel();
+        if (downloadItem.getState() === "progressing") {
+          downloadItem.cancel();
+        }
       } catch (error) {
         getLogger().error(
           `ModelManager: Error canceling download: ${model.name}`,
@@ -377,16 +490,62 @@ class ModelManager {
       }
 
       delete this.downloadItems[model.name];
+      delete this.downloadStartTimes[model.name];
+    }
+
+    // Reset downloadState on the model in state
+    const currentModels = { ...this.models };
+    if (currentModels[model.name]) {
+      currentModels[model.name].downloadState = undefined;
+      currentModels[model.name].downloaded = this.getIsModelDownloaded(
+        currentModels[model.name],
+      );
+      this.models = currentModels;
+    }
+
+    this.ensureSelectedModelValid();
+    this.pollRendererModelState();
+  }
+
+  private ensureSelectedModelValid() {
+    try {
+      const settings = getStateManager().store.get("settings");
+      if (settings && settings.selectedModel) {
+        const selectedModelObj = this.models[settings.selectedModel];
+        if (!selectedModelObj || !this.getIsModelDownloaded(selectedModelObj)) {
+          const otherDownloaded = Object.values(this.models).find((m) =>
+            this.getIsModelDownloaded(m),
+          );
+          getStateManager().store.set(
+            "settings.selectedModel",
+            otherDownloaded ? otherDownloaded.name : undefined,
+          );
+        }
+      }
+    } catch (error) {
+      getLogger().warn("Failed to ensure valid selected model", error);
     }
   }
 
   /**
    * Cancels all downloads
    */
-  private cancelAllDownloads() {
+  public cancelAllDownloads() {
+    this.pendingDownloadModelName = undefined;
     for (const name in this.downloadItems) {
-      this.cancelDownload(this.models[name]);
+      if (this.models[name]) {
+        this.cancelDownload(this.models[name]);
+      } else {
+        try {
+          this.downloadItems[name]?.cancel();
+        } catch {
+          // ignore
+        }
+        delete this.downloadItems[name];
+        delete this.downloadStartTimes[name];
+      }
     }
+    this.pollRendererModelState();
   }
 
   /**

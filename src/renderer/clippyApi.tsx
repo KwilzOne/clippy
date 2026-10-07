@@ -22,6 +22,7 @@ export type ClippyApi = {
   // Models
   updateModelState: () => Promise<void>;
   downloadModelByName: (name: string) => Promise<void>;
+  cancelDownloadByName: (name: string) => Promise<void>;
   removeModelByName: (name: string) => Promise<void>;
   deleteModelByName: (name: string) => Promise<boolean>;
   deleteAllModels: () => Promise<boolean>;

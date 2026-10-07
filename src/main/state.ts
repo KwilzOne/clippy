@@ -149,9 +149,16 @@ export class StateManager {
    *
    * @param newValue
    */
-  public onDidAnyChange(newValue: SharedState = this.store.store) {
-    getMainWindow()?.webContents.send(IpcMessages.STATE_CHANGED, newValue);
-  }
+  public onDidAnyChange = (newValue: SharedState = this.store.store) => {
+    try {
+      const win = getMainWindow();
+      if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+        win.webContents.send(IpcMessages.STATE_CHANGED, newValue);
+      }
+    } catch (error) {
+      getLogger().warn("Failed to send state change to renderer", error);
+    }
+  };
 }
 
 let _stateManager: StateManager | null = null;

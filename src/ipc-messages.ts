@@ -8,6 +8,7 @@ export const IpcMessages = {
 
   // Model messages
   DOWNLOAD_MODEL_BY_NAME: "clippy_download_model_by_name",
+  CANCEL_DOWNLOAD_BY_NAME: "clippy_cancel_download_by_name",
   REMOVE_MODEL_BY_NAME: "clippy_remove_model_by_name",
   DELETE_MODEL_BY_NAME: "clippy_delete_model_by_name",
   DELETE_ALL_MODELS: "clippy_delete_all_models",

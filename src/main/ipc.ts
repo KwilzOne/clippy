@@ -30,6 +30,9 @@ export function setupIpcListeners() {
   ipcMain.handle(IpcMessages.DOWNLOAD_MODEL_BY_NAME, (_, name: string) =>
     getModelManager().downloadModelByName(name),
   );
+  ipcMain.handle(IpcMessages.CANCEL_DOWNLOAD_BY_NAME, (_, name: string) =>
+    getModelManager().cancelDownloadByName(name),
+  );
   ipcMain.handle(IpcMessages.REMOVE_MODEL_BY_NAME, (_, name: string) =>
     getModelManager().removeModelByName(name),
   );

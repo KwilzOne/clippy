@@ -19,3 +19,36 @@ fieldset button:first-of-type {
 fieldset button:last-of-type {
   margin-right: 0;
 }
+
+.progress-indicator {
+  background: #c0c0c0;
+  box-shadow:
+    inset -1px -1px #fff,
+    inset 1px 1px #0a0a0a,
+    inset -2px -2px #dfdfdf,
+    inset 2px 2px #808080;
+  padding: 2px;
+  height: 20px;
+  box-sizing: border-box;
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+}
+
+.progress-indicator-bar {
+  display: block;
+  height: 100%;
+  background-color: #000080;
+  transition: width 0.15s ease-out;
+}
+
+.progress-indicator.segmented .progress-indicator-bar {
+  background: repeating-linear-gradient(
+    90deg,
+    #000080 0,
+    #000080 8px,
+    transparent 8px,
+    transparent 10px
+  ) !important;
+  background-color: transparent !important;
+}

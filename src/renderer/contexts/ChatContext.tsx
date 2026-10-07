@@ -139,6 +139,18 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     async (initialPrompts: LanguageModelPrompt[] = []) => {
       setIsModelLoaded(false);
 
+      if (!settings.selectedModel) {
+        return;
+      }
+
+      const model = models[settings.selectedModel];
+      if (!model || !model.downloaded) {
+        console.log(
+          `Selected model (${settings.selectedModel}) is not downloaded, skipping loadModel.`,
+        );
+        return;
+      }
+
       const options: LanguageModelCreateOptions = {
         modelAlias: settings.selectedModel,
         systemPrompt: getSystemPrompt(),
@@ -165,6 +177,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     },
     [
       settings.selectedModel,
+      models,
       settings.systemPrompt,
       settings.topK,
       settings.temperature,
@@ -225,9 +238,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    if (settings.selectedModel) {
+    const currentModel = settings.selectedModel
+      ? models[settings.selectedModel]
+      : undefined;
+
+    if (currentModel && currentModel.downloaded) {
       loadModel();
-    } else if (!settings.selectedModel && isModelLoaded) {
+    } else if (isModelLoaded) {
       electronAi
         .destroy()
         .then(() => {
@@ -239,17 +256,21 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     }
   }, [
     settings.selectedModel,
+    models,
     settings.systemPrompt,
     settings.topK,
     settings.temperature,
+    loadModel,
+    isModelLoaded,
+    debug?.simulateDownload,
   ]);
 
-  // If selectedModel is undefined or not available, set it to the first downloaded model
+  // If selectedModel is undefined or not available / not downloaded, update selectedModel
   useEffect(() => {
     if (
-      !settings.selectedModel ||
-      !models[settings.selectedModel] ||
-      !models[settings.selectedModel].downloaded
+      settings.selectedModel &&
+      (!models[settings.selectedModel] ||
+        !models[settings.selectedModel].downloaded)
     ) {
       const downloadedModel = Object.values(models).find(
         (model) => model.downloaded,
@@ -257,9 +278,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
       if (downloadedModel) {
         clippyApi.setState("settings.selectedModel", downloadedModel.name);
+      } else {
+        clippyApi.setState("settings.selectedModel", undefined);
       }
     }
-  }, [models]);
+  }, [models, settings.selectedModel]);
 
   // At app startup, initially load the chat records from the main process
   useEffect(() => {
@@ -294,7 +317,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     });
 
     const downloadModelIfNoneReady = async () => {
-      await clippyApi.downloadModelByName("Gemma 3 (1B)");
+      const modelToDownload =
+        settings.selectedModel && models[settings.selectedModel]
+          ? settings.selectedModel
+          : "Gemma 3 (1B)";
+      await clippyApi.downloadModelByName(modelToDownload);
 
       setTimeout(async () => {
         await clippyApi.updateModelState();
@@ -302,7 +329,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     };
 
     void downloadModelIfNoneReady();
-  }, [models]);
+  }, [models, settings.selectedModel]);
 
   // Subscribe to the main process's newChat event
   useEffect(() => {

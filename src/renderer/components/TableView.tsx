@@ -23,7 +23,7 @@ interface TableViewProps {
   columns: Column[];
   data: Row[];
   style?: React.CSSProperties;
-  onRowSelect?: (index: number) => void;
+  onRowSelect?: (index: number, row?: Row) => void;
   initialSelectedIndex?: number;
 }
 
@@ -37,6 +37,16 @@ export const TableView: React.FC<TableViewProps> = ({
   const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(
     initialSelectedIndex ?? null,
   );
+  useEffect(() => {
+    if (
+      typeof initialSelectedIndex === "number" &&
+      data[initialSelectedIndex]
+    ) {
+      const row = data[initialSelectedIndex];
+      const sortedIndex = sortedData.indexOf(row);
+      if (sortedIndex !== -1) setSelectedRowIndex(sortedIndex);
+    }
+  }, [initialSelectedIndex, data]);
   const [columnWidths, setColumnWidths] = useState<{ [key: string]: number }>(
     {},
   );
@@ -75,13 +85,12 @@ export const TableView: React.FC<TableViewProps> = ({
 
   const handleRowSelect = useCallback(
     (sortedDataIndex: number) => {
-      if (onRowSelect) {
-        onRowSelect(indexMap.get(sortedData[sortedDataIndex]));
-      }
-
+      const selectedRow = sortedData[sortedDataIndex];
+      const originalIndex = indexMap.get(selectedRow) ?? sortedDataIndex;
+      if (onRowSelect) onRowSelect(originalIndex, selectedRow);
       setSelectedRowIndex(sortedDataIndex);
     },
-    [onRowSelect, indexMap],
+    [onRowSelect, indexMap, sortedData],
   );
 
   const handleSort = (columnKey: string) => {
